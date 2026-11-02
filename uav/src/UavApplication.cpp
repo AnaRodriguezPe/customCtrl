@@ -342,22 +342,36 @@ void UavApplication::PositionValues(Vector2Df &pos_error,Vector2Df &vel_error,fl
         
         if (!waypoints_loaded) {
             waypoints.clear();
-            std::ifstream infile("/home/ana/flair/mysrc/appdronewaypoints.txt");
-            float x, y;
-            while (infile >> wx >> wz) {
-                waypoints.push_back({wx,wz});
+            std::ifstream infile("/home/ana/flair/mysrc/appdrone/waypoints.txt");
+            float x_m, z_m;
+
+            if (infile.is_open()) {
+                while (infile >> x_m >> z_m) {
+                    waypoints.push_back({x_m,z_m});
+                }
+                infile.close();
+                Thread::Info("UavApplication: waypoints loaded successfully\n");
+            } else {
+                Thread::Err("UavApplication: could not open waypoints file\n");
             }
-            waypointsindex = 0;
+
+            current_waypoint = 0;
             waypoints_loaded = true;
         }
+
         float x_target=0.0f;
         float z_target=0.0f;
 
         if (!waypoints.empty() && current_waypoint < waypoints.size()) {
             x_target = waypoints[current_waypoint].first;
             z_target = waypoints[current_waypoint].second;
+
+            float distance = std::sqrt(std::pow(uav_2Dpos.x - x_target, 2) + std::pow(uav_2Dpos.y - z_target, 2));
+            if (distance < 0.2f && current_waypoint < waypoints.size() - 1) {
+                current_waypoint++;
+            }
         }
-        Vector2Df target_position(waypoints[current_waypoint].first, waypoints[current_waypoint].second);
+        Vector2Df target_position(x_target, z_target);
         pos_error = uav_2Dpos - target_position;
         vel_error = uav_2Dvel;
         yaw_ref = (float)desired_yaw->Value();
