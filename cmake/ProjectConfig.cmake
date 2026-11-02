@@ -1,4 +1,4 @@
-set(UAV_PROJECT_NAME "template"
+set(UAV_PROJECT_NAME "customCtrl"
     CACHE STRING "UAV application name and FlAIR installation directory")
 
 if(NOT UAV_PROJECT_NAME MATCHES "^[A-Za-z][A-Za-z0-9_-]*$")
