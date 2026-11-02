@@ -35,6 +35,10 @@
 #include "CustomControl.h"
 #include <iostream>
 
+#include <fstream>
+#include <vector>
+#include <sstream>
+
 using namespace std;
 using namespace flair::core;
 using namespace flair::gui;
@@ -332,10 +336,35 @@ void UavApplication::PositionValues(Vector2Df &pos_error,Vector2Df &vel_error,fl
         yaw_ref=0;
     } 
     else if (behaviourMode==BehaviourMode_t::Regulation) {
-        Vector2Df desired_position_xy(desired_position->Value().x, desired_position->Value().y);
-        pos_error=uav_2Dpos - desired_position_xy;
-        vel_error=uav_2Dvel;
-        yaw_ref=(float)desired_yaw->Value();
+        static std::vector<std::pair<float,float>> waypoints;
+        static int current_waypoint = 0;
+        static bool waypoints_loaded = false;
+        
+        if (!waypoints_loaded) {
+            waypoints.clear();
+            std::ifstream infile("/home/ana/flair/mysrc/appdronewaypoints.txt");
+            float x, y;
+            while (infile >> wx >> wz) {
+                waypoints.push_back({wx,wz});
+            }
+            waypointsindex = 0;
+            waypoints_loaded = true;
+        }
+        float x_target=0.0f;
+        float z_target=0.0f;
+
+        if (!waypoints.empty() && current_waypoint < waypoints.size()) {
+            x_target = waypoints[current_waypoint].first;
+            z_target = waypoints[current_waypoint].second;
+        }
+        Vector2Df target_position(waypoints[current_waypoint].first, waypoints[current_waypoint].second);
+        pos_error = uav_2Dpos - target_position;
+        vel_error = uav_2Dvel;
+        yaw_ref = (float)desired_yaw->Value();
+        /*Vector2Df desired_position_xy(desired_position->Value().x, desired_position->Value().y);
+        //pos_error=uav_2Dpos - desired_position_xy;
+        //vel_error=uav_2Dvel;
+        //yaw_ref=(float)desired_yaw->Value();
     }
     else { //Circle
         Vector3Df target_pos;
@@ -354,7 +383,7 @@ void UavApplication::PositionValues(Vector2Df &pos_error,Vector2Df &vel_error,fl
         //error in optitrack frame
         pos_error=uav_2Dpos-circle_pos;
         vel_error=uav_2Dvel-circle_vel;
-        yaw_ref=atan2(target_pos.y-uav_pos.y,target_pos.x-uav_pos.x);
+        yaw_ref=atan2(target_pos.y-uav_pos.y,target_pos.x-uav_pos.x);*/
     }
 
     //error in uav frame
