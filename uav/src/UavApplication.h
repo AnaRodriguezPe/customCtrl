@@ -49,7 +49,8 @@ class UavApplication : public flair::meta::UavStateMachine {
             PositionHold,
             Circle, 
             Regulation, 
-            Hover
+            Hover,
+            Appdrone
         };
 
     enum class ControlMode_t {
@@ -85,6 +86,9 @@ class UavApplication : public flair::meta::UavStateMachine {
         flair::core::Vector2Df posHold;
         float yawHold;
         float thrust;
+        //
+        float zdesidered;
+        //
 
         flair::meta::MetaVrpnObject *targetVrpn,*uavVrpn;
         flair::filter::TrajectoryGenerator2DCircle *circle;
@@ -103,6 +107,13 @@ class UavApplication : public flair::meta::UavStateMachine {
         flair::gui::ComboBox *task_selection;
         flair::gui::Vector3DSpinBox *desired_position;
         flair::gui::DoubleSpinBox *desired_yaw;
+
+        //test boton and spinbox
+        //flair::gui::GroupBox *myGroupBox;
+        //flair::gui::PushButton *mybutton;
+        //flair::gui::DoubleSpinBox *myvalue;
+        //flair::gui::Vector3DSpinBox *myvector;
+        //
 };
 
 #endif // UavApplication_H

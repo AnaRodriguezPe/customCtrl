@@ -1,0 +1,1 @@
+time (s),ahrs\Wx degree,consignes joy\Wx degree,reference\Wx degree

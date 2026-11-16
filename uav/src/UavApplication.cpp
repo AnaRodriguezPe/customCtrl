@@ -35,9 +35,13 @@
 #include "CustomControl.h"
 #include <iostream>
 
-#include <fstream>
-#include <vector>
-#include <sstream>
+//
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cstdio>
+//
 
 using namespace std;
 using namespace flair::core;
@@ -45,6 +49,42 @@ using namespace flair::gui;
 using namespace flair::sensor;
 using namespace flair::filter;
 using namespace flair::meta;
+
+//
+static bool Appdronesetpoint(float &x, float &z) {
+    static int sock = -1;
+    static bool inicio = false, valid=false;
+    static float sx=0, sz=0;
+    if (!inicio) {
+        inicio = true;
+        sock = socket(AF_INET, SOCK_DGRAM, 0);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(65433);
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        if (sock < 0 || bind(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
+            Printf("Appdrone: no se pudo abrir el puerto 65433\n");
+            if (sock >= 0) close(sock);
+            sock = -1;
+        } else {
+            fcntl(sock, F_SETFL, O_NONBLOCK);
+        }
+    }
+    if (sock < 0) return false;
+ 
+    char buf[256]; ssize_t n; float a, b;
+    while ((n = recv(sock, buf, sizeof(buf) - 1, 0)) > 0) {
+        buf[n] = 0;
+        if (sscanf(buf, "%f %f", &a, &b) == 2 && std::isfinite(a) && std::isfinite(b)) {
+            sx = std::max(-3.0f, std::min(3.0f, a));   // x: -3 a 3 m
+            sz = std::max(0.3f, std::min(2.0f, b));    // z (altura): 0.3 a 2 m
+            valid = true;
+        }
+    }
+    x = sx; z = sz;
+    return valid;
+}
+//
 
 UavApplication::UavApplication(TargetController *controller): UavStateMachine(controller), behaviourMode(BehaviourMode_t::Default), vrpnLost(false), controlMode_t(ControlMode_t::Default) {
     Uav* uav=GetUav();
@@ -88,9 +128,19 @@ UavApplication::UavApplication(TargetController *controller): UavStateMachine(co
     task_selection->AddItem("Hovering at zero");
     task_selection->AddItem("Regulation task");
     task_selection->AddItem("Circle tracking");
+    //
+    task_selection->AddItem("Appdrone task");
+    //
 
     desired_position = new Vector3DSpinBox(taskModeBox->NewRow(), "Desired position [m]", -3, 3, 0.1, 3);
     desired_yaw = new DoubleSpinBox(taskModeBox->NewRow(), "Desired yaw [rad]", -M_PI, M_PI, 0.1, 3);
+
+    // custum gui items
+    //myGroupBox= new GroupBox(GetButtonsLayout()->NewRow(),":D");
+    //mybutton= new PushButton(myGroupBox->NewRow(),"button (:");
+    //myvalue= new DoubleSpinBox(myGroupBox->LastRowLastCol(),"numeros",-10,10,0.1,2);
+    //myvector= new Vector3DSpinBox(myGroupBox->NewRow(),"vector",-3,3,0.1,3);
+    //
 
     circle=new TrajectoryGenerator2DCircle(GetButtonsLayout()->NewRow(),"circle");
     uavVrpn->xPlot()->AddCurve(circle->GetMatrix()->Element(0,0),DataPlot::Blue);
@@ -169,19 +219,32 @@ void UavApplication::computeMyCtrl(Euler &torques)
     Vector2Df pos_error2D, vel_error2D;
     // Example of desired altitude [m] => (ALWAYS A POSITIVE VALUE) 
     // Because the AltitudeValues function returns a positive value also. However, the UAV's altitude is negative in the VRPN coordinate system.
-    float altittude_desired = desired_position->Value().z; 
-    if (altittude_desired <= 0)
-    {
+    float altitude_desired = 0.0f;
+
+    if (behaviourMode == BehaviourMode_t::Regulation || behaviourMode == BehaviourMode_t::Hover || behaviourMode == BehaviourMode_t::PositionHold) {
+        altitude_desired = desired_position->Value().z;
+    } else if (behaviourMode == BehaviourMode_t::Appdrone) {
+        altitude_desired = zdesidered; // Use the desired altitude set by the Appdrone task
+    } else {
+        // Manejar los modos no contemplados.
+        return;
+    }
+
+    if (altitude_desired <= 0.0f) {
         Thread::Warn("UavApplication: desired altitude must be positive, see AltitudeValues function.\n");
         EnterFailSafeMode();
         return;
     }
-    float yaw_ref;
-    float z, dz;
+
+    // Inicializa estas variables antes de usarlas.
+    float yaw_ref = 0.0f;
+    float z = 0.0f;
+    float dz = 0.0f;
+
     AltitudeValues(z, dz);
     PositionValues(pos_error2D, vel_error2D, yaw_ref);
     // Notice that the error definition is current - desired for x,y and z. 
-    Vector3Df pos_error = Vector3Df(pos_error2D.x, pos_error2D.y, z-altittude_desired);
+    Vector3Df pos_error = Vector3Df(pos_error2D.x, pos_error2D.y, z-altitude_desired);
     Vector3Df vel_error = Vector3Df(vel_error2D.x, vel_error2D.y, dz);
 
     // Set the values of the custom controller and update it
@@ -336,50 +399,26 @@ void UavApplication::PositionValues(Vector2Df &pos_error,Vector2Df &vel_error,fl
         yaw_ref=0;
     } 
     else if (behaviourMode==BehaviourMode_t::Regulation) {
-        static std::vector<std::pair<float,float>> waypoints;
-        static int current_waypoint = 0;
-        static bool waypoints_loaded = false;
-        
-        if (!waypoints_loaded) {
-            waypoints.clear();
-            std::ifstream infile("/home/ana/flair/mysrc/appdrone/waypoints.txt");
-            float x_m, z_m;
-
-            if (infile.is_open()) {
-                while (infile >> x_m >> z_m) {
-                    waypoints.push_back({x_m,z_m});
-                }
-                infile.close();
-                Thread::Info("UavApplication: waypoints loaded successfully\n");
-            } else {
-                Thread::Err("UavApplication: could not open waypoints file\n");
-            }
-
-            current_waypoint = 0;
-            waypoints_loaded = true;
-        }
-
-        float x_target=0.0f;
-        float z_target=0.0f;
-
-        if (!waypoints.empty() && current_waypoint < waypoints.size()) {
-            x_target = waypoints[current_waypoint].first;
-            z_target = waypoints[current_waypoint].second;
-
-            float distance = std::sqrt(std::pow(uav_2Dpos.x - x_target, 2) + std::pow(uav_2Dpos.y - z_target, 2));
-            if (distance < 0.2f && current_waypoint < waypoints.size() - 1) {
-                current_waypoint++;
-            }
-        }
-        Vector2Df target_position(x_target, z_target);
-        pos_error = uav_2Dpos - target_position;
-        vel_error = uav_2Dvel;
-        yaw_ref = (float)desired_yaw->Value();
-        /*Vector2Df desired_position_xy(desired_position->Value().x, desired_position->Value().y);
-        //pos_error=uav_2Dpos - desired_position_xy;
-        //vel_error=uav_2Dvel;
-        //yaw_ref=(float)desired_yaw->Value();
+        Vector2Df desired_position_xy(desired_position->Value().x, desired_position->Value().y);
+        pos_error=uav_2Dpos - desired_position_xy;
+        vel_error=uav_2Dvel;
+        yaw_ref=(float)desired_yaw->Value();
     }
+    //
+    else if(behaviourMode==BehaviourMode_t::Appdrone) {
+        Vector2Df desired_position_xy(desired_position->Value().x, desired_position->Value().y);
+        float sx, sz;
+        if (Appdronesetpoint(sx, sz)) 
+        {
+            desired_position_xy = Vector2Df(sx, 0);
+            zdesidered = sz; // Update the desired altitude based on the Appdrone setpoint
+        }
+        pos_error=uav_2Dpos - desired_position_xy;
+        vel_error=uav_2Dvel;
+        yaw_ref=(float)desired_yaw->Value();
+        //yaw_ref=atan2(target_pos.y-uav_pos.y,target_pos.x-uav_pos.x); paque apunta al objetivo
+    }
+    //
     else { //Circle
         Vector3Df target_pos;
         Vector2Df circle_pos,circle_vel;
@@ -397,7 +436,7 @@ void UavApplication::PositionValues(Vector2Df &pos_error,Vector2Df &vel_error,fl
         //error in optitrack frame
         pos_error=uav_2Dpos-circle_pos;
         vel_error=uav_2Dvel-circle_vel;
-        yaw_ref=atan2(target_pos.y-uav_pos.y,target_pos.x-uav_pos.x);*/
+        yaw_ref=atan2(target_pos.y-uav_pos.y,target_pos.x-uav_pos.x);
     }
 
     //error in uav frame
@@ -441,7 +480,7 @@ void UavApplication::ExtraSecurityCheck(void) {
             Land();
         }
     }
-    if ((!vrpnLost) && ((behaviourMode==BehaviourMode_t::Hover) || (behaviourMode==BehaviourMode_t::Regulation))) {
+    if ((!vrpnLost) && ((behaviourMode==BehaviourMode_t::Hover) || (behaviourMode==BehaviourMode_t::Regulation) || (behaviourMode==BehaviourMode_t::Appdrone))) {
         if (!uavVrpn->IsTracked(500)) {
             Thread::Err("VRPN, uav lost\n");
             vrpnLost=true;
@@ -521,6 +560,14 @@ void UavApplication::Start_task(void) {
         behaviourMode=BehaviourMode_t::Circle;
         Thread::Info("UavApplication: circle tracking\n");
     }
+    // Appdrone task
+    else if (task_selection->CurrentIndex() == 3) {
+        uX->Reset();
+        uY->Reset();
+        behaviourMode=BehaviourMode_t::Appdrone;
+        Thread::Info("UavApplication: Appdrone task\n");
+    }
+    //
     else {
         EnterFailSafeMode();
         Thread::Err("UavApplication: unknown task\n");
