@@ -11,6 +11,7 @@
 /*********************************************************************/
 
 #include "UavApplication.h"
+#include <Object.h>
 #include <TargetController.h>
 #include <Uav.h>
 #include <GridLayout.h>
@@ -41,6 +42,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstdio>
+#include <chrono>
 //
 
 using namespace std;
@@ -51,10 +53,13 @@ using namespace flair::filter;
 using namespace flair::meta;
 
 //
-static bool Appdronesetpoint(float &x, float &z) {
+bool UavApplication::Appdronesetpoint(float &x, float &z) {
+    using clk = std::chrono::steady_clock;
     static int sock = -1;
-    static bool inicio = false, valid=false;
-    static float sx=0, sz=0;
+    static bool inicio = false, valid = false, timedOut = false;
+    static float sx = 0, sz = 0;
+       
+
     if (!inicio) {
         inicio = true;
         sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -63,26 +68,26 @@ static bool Appdronesetpoint(float &x, float &z) {
         addr.sin_port = htons(65433);
         addr.sin_addr.s_addr = htonl(INADDR_ANY);
         if (sock < 0 || bind(sock, (sockaddr*)&addr, sizeof(addr)) < 0) {
-            Printf("Appdrone: no se pudo abrir el puerto 65433\n");
+            Thread::Err("no listening port\n");
             if (sock >= 0) close(sock);
             sock = -1;
         } else {
             fcntl(sock, F_SETFL, O_NONBLOCK);
+            Thread::Info("listening port\n");
         }
     }
     if (sock < 0) return false;
- 
+
     char buf[256]; ssize_t n; float a, b;
     while ((n = recv(sock, buf, sizeof(buf) - 1, 0)) > 0) {
         buf[n] = 0;
         if (sscanf(buf, "%f %f", &a, &b) == 2 && std::isfinite(a) && std::isfinite(b)) {
-            sx = std::max(-3.0f, std::min(3.0f, a));   // x: -3 a 3 m
-            sz = std::max(0.3f, std::min(2.0f, b));    // z (altura): 0.3 a 2 m
-            valid = true;
+            sx = std::max(-3.0f, std::min(3.0f, a));
+            sz = std::max(0.3f, std::min(2.0f, b));
         }
     }
     x = sx; z = sz;
-    return valid;
+    return true;
 }
 //
 
@@ -224,7 +229,7 @@ void UavApplication::computeMyCtrl(Euler &torques)
     if (behaviourMode == BehaviourMode_t::Regulation || behaviourMode == BehaviourMode_t::Hover || behaviourMode == BehaviourMode_t::PositionHold) {
         altitude_desired = desired_position->Value().z;
     } else if (behaviourMode == BehaviourMode_t::Appdrone) {
-        altitude_desired = zdesidered; // Use the desired altitude set by the Appdrone task
+        altitude_desired = zdesidered; // Use the desired altitude
     } else {
         // Manejar los modos no contemplados.
         return;
@@ -247,6 +252,7 @@ void UavApplication::computeMyCtrl(Euler &torques)
     Vector3Df pos_error = Vector3Df(pos_error2D.x, pos_error2D.y, z-altitude_desired);
     Vector3Df vel_error = Vector3Df(vel_error2D.x, vel_error2D.y, dz);
 
+    Thread::Info(" x=%.3f y=%.3f z=%.3f\n", pos_error.x, pos_error.y, pos_error.z);
     // Set the values of the custom controller and update it
     myCtrl->SetValues(pos_error, vel_error, mixQuaternion, currentAngularSpeed, yaw_ref);
     myCtrl->Update(GetTime());
@@ -411,7 +417,9 @@ void UavApplication::PositionValues(Vector2Df &pos_error,Vector2Df &vel_error,fl
         if (Appdronesetpoint(sx, sz)) 
         {
             desired_position_xy = Vector2Df(sx, 0);
-            zdesidered = sz; // Update the desired altitude based on the Appdrone setpoint
+            zdesidered = sz; // Update the desired altitude
+        } else{
+            zdesidered=desired_position->Value().z;
         }
         pos_error=uav_2Dpos - desired_position_xy;
         vel_error=uav_2Dvel;
@@ -564,6 +572,7 @@ void UavApplication::Start_task(void) {
     else if (task_selection->CurrentIndex() == 3) {
         uX->Reset();
         uY->Reset();
+        zdesidered=desired_position->Value().z;
         behaviourMode=BehaviourMode_t::Appdrone;
         Thread::Info("UavApplication: Appdrone task\n");
     }

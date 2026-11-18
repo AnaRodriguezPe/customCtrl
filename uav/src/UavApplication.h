@@ -61,6 +61,9 @@ class UavApplication : public flair::meta::UavStateMachine {
         BehaviourMode_t behaviourMode;
         ControlMode_t controlMode_t;
         bool vrpnLost;
+        //
+        bool Appdronesetpoint(float &x, float &z);
+        //
 
         void VrpnPositionHold(void);//flight mode
         void Start_task(void);
