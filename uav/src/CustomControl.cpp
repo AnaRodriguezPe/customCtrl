@@ -146,7 +146,7 @@ void CustomControl::UpdateFrom(const io_data *data)
     state->SetValue(1, 0, pos_error.y);
     state->SetValue(2, 0, pos_error.z);
     state->SetValue(3, 0, rpy.YawDistanceFrom(yaw_ref));
-    state->ReleaseMutex();
+    state->ReleaseMutex(); // guardar señales
 
     ProcessUpdate(output);
 }

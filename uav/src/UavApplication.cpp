@@ -12,6 +12,7 @@
 
 #include "UavApplication.h"
 #include <Object.h>
+#include <Quaternion.h>
 #include <TargetController.h>
 #include <Uav.h>
 #include <GridLayout.h>
@@ -19,6 +20,7 @@
 #include <DataPlot1D.h>
 #include <DataPlot2D.h>
 #include <FrameworkManager.h>
+#include <Vector3D.h>
 #include <VrpnClient.h>
 #include <MetaVrpnObject.h>
 #include <TrajectoryGenerator2DCircle.h>
@@ -426,6 +428,7 @@ void UavApplication::PositionValues(Vector2Df &pos_error,Vector2Df &vel_error,fl
         yaw_ref=(float)desired_yaw->Value();
         //yaw_ref=atan2(target_pos.y-uav_pos.y,target_pos.x-uav_pos.x); paque apunta al objetivo
     }
+
     //
     else { //Circle
         Vector3Df target_pos;
@@ -572,6 +575,7 @@ void UavApplication::Start_task(void) {
     else if (task_selection->CurrentIndex() == 3) {
         uX->Reset();
         uY->Reset();
+
         zdesidered=desired_position->Value().z;
         behaviourMode=BehaviourMode_t::Appdrone;
         Thread::Info("UavApplication: Appdrone task\n");
